@@ -163,7 +163,7 @@ async def process_rase(message: types.Message, state: FSMContext):
 async def process_inventory(message: types.Message, state: FSMContext):
     inventory = message.text
     await state.update_data(inventory=inventory)
-
+    
     data = await state.get_data()
     inventory = (
         f"Имя: {data['name']}\n"
@@ -172,8 +172,8 @@ async def process_inventory(message: types.Message, state: FSMContext):
         f"Раса: {data['rase']}\n"
         f"Инвентарь: {data['inventory']}\n"
     )
-    with sqlite3.connect('list.db') as cnn:
-        cnn.execute(
+    with sqlite3.connect('list.db') as list:
+        list.execute(
             """
         create table if not exists data
         (
@@ -187,17 +187,9 @@ async def process_inventory(message: types.Message, state: FSMContext):
         );
         """)
 
-        cnn.execute(
-            """
-
-            create unique index if not exists data_name_uindex
-                on data (name);
-
-                """
-        )
-        cr = cnn.cursor()
+        cursor_list = list.cursor()
         try:
-            cr.execute(
+            cursor_list.execute(
                 """
                 INSERT INTO data (name, age, gender, rase, inventory)
                             VALUES (:name, :age, :gender, :rase, :inventory)
@@ -208,12 +200,12 @@ async def process_inventory(message: types.Message, state: FSMContext):
                 data
             )
         except Exception:
-            cnn.rollback()
-            cr.close()
+            list.rollback()
+            cursor_list.close()
             raise
         else:
-            cnn.commit()
-            cr.close()
+            list.commit()
+            cursor_list.close()
     await state.update_data(inventory=inventory) # сохраняем введенные данные во внутреннем хранилище
     await message.answer(f"Ваш персонаж создан:\n\n{inventory}")
     await state.clear()
