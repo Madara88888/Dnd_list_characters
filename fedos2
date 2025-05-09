@@ -8,15 +8,15 @@ from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
 from aiogram import Bot, Dispatcher, types, F
 
-
 import sqlite3 # База данных
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton # для музыки  magic
 
-
+import random # Кубики
 
 reply_keyboard = [[KeyboardButton(text='/create'), KeyboardButton(text='/help')],
                   [KeyboardButton(text='/check')],
                   [KeyboardButton(text='/magic')],
+                  [KeyboardButton(text='/dice')],
                   [KeyboardButton(text="/stop")]]
 
 kb = ReplyKeyboardMarkup(keyboard=reply_keyboard, resize_keyboard=True, one_time_keyboard=False)
@@ -72,35 +72,52 @@ def dobavka_person(user_id): # Добавляем его если его нет
 @dp.message(Command('start'))
 async def start(message: types.Message):
     user_id = message.from_user.id
+    first_name = message.from_user.first_name
     if check_person(user_id):
         dobavka_person(user_id)
-        await message.reply("Привет! Вижу ты у нас впервые! Познакомимся?\n"
+        await message.answer(f"Привет, {first_name}! Вижу ты у нас впервые! Познакомимся?\n"
                             "Я ДНД бот. Давай создадим персонажа!\n"
                             "/create - создать нового персонажа\n"
                             "/check - просмотреть созданных персонажей\n"
                             "/help - справочник", reply_markup=kb)
     else:
-        await message.reply("С возвращением! Рад тебя снова видеть! \n"
+        await message.answer(f"С возвращением, {first_name}! Рад тебя снова видеть! \n"
                             "/create - создать нового персонажа\n"
                             "/check - просмотреть созданных персонажей\n"
                             "/help - справочник", reply_markup=kb)
 
 
+@dp.message(Command('dice')) # Бросание кубиков
+async def show_dice_options(message: types.Message):
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="Бросить обычный кубик")],
+            [KeyboardButton(text="Бросить 2 кубика")],
+            [KeyboardButton(text="Бросить один с 20-ю гранями")],
+            [KeyboardButton(text="Стоп")]
+        ],
+        resize_keyboard=True
+    )
+    await message.answer("Выберите тип кубика:", reply_markup=keyboard)
 
-# НЕ РАБООТАЕТ
-#@dp.message(Command("stop"))
-#@dp.message(F.text.casefold() == "stop")
-#async def cancel_handler(message: types.Message, state: FSMContext):
-#    current_state = await state.get_state()
-#    if current_state is None:
-#        return 
-#
-#    logging.info("Остановились на шаге %r", current_state)
-#    await state.clear()
-#    await message.answer(
-#        "Всего доброго!",
-#    )
-# НЕ РАБООТАЕТ
+
+@dp.message(F.text.lower().startswith("бросить")) # Ответ на броски
+async def handle_dice_message(message: types.Message):
+    text = message.text.lower()
+    if "2 кубика" in text:
+        result1 = random.randint(1, 6)
+        result2 = random.randint(1, 6)
+        await message.answer(f" Выпало: {result1} и {result2}")
+    elif "обычный" in text:
+        result = random.randint(1, 6)
+        await message.answer(f" Выпало: {result}")
+    elif "20" in text:
+        result = random.randint(1, 20)
+        await message.answer(f"Выпало: {result}")
+    elif "Стоп" in text: # Сделать кнопку пока на выход 
+        pass
+    else:
+        await message.answer("Я не знаю такой тип кубика. Попробуйте d6, 2d6 или d20.")
 
 
 @dp.message(Command('stop'))
@@ -124,9 +141,8 @@ async def phone(message: types.Message):
 
 @dp.message(Command("magic"))
 async def magic_button(message: types.Message):
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="бонус", url="https://www.youtube.com/watch?v=y75VErslEVQ")]
-    ])
+    keyboard = InlineKeyboardButton(text='Сообщение 2', callback_data='message_2')
+    await message.answer(keyboard)
 
     
 @dp.message(Form.name)
@@ -164,15 +180,49 @@ async def process_rase(message: types.Message, state: FSMContext):
 async def process_inventory(message: types.Message, state: FSMContext):
     inventory = message.text
     await state.update_data(inventory=inventory)
-
+    
     data = await state.get_data()
     inventory = (
         f"Имя: {data['name']}\n"
         f"Возраст: {data['age']}\n"
         f"Пол: {data['gender']}\n"
         f"Раса: {data['rase']}\n"
-        f"Инвентарь: {data['inventory']}"
+        f"Инвентарь: {data['inventory']}\n"
     )
+    with sqlite3.connect('list.db') as list:
+        list.execute(
+            """
+        create table if not exists data
+        (
+            id     INTEGER
+                primary key autoincrement,
+            name   TEXT,
+            age    INT,
+            gender TEXT,
+            rase   TEXT,
+            inventory TEXT
+        );
+        """)
+
+        cursor_list = list.cursor()
+        try:
+            cursor_list.execute(
+                """
+                INSERT INTO data (name, age, gender, rase, inventory)
+                            VALUES (:name, :age, :gender, :rase, :inventory)
+                    on conflict (name) do
+                    update
+                        set age = excluded.age
+                """,
+                data
+            )
+        except Exception:
+            list.rollback()
+            cursor_list.close()
+            raise
+        else:
+            list.commit()
+            cursor_list.close()
     await state.update_data(inventory=inventory) # сохраняем введенные данные во внутреннем хранилище
     await message.answer(f"Ваш персонаж создан:\n\n{inventory}")
     await state.clear()
