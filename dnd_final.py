@@ -19,6 +19,7 @@ reply_keyboard = [[KeyboardButton(text='/create'), KeyboardButton(text='/check')
                   [KeyboardButton(text='/help')],
                   [KeyboardButton(text='/magic'), KeyboardButton(text='/dict')],
                   [KeyboardButton(text='/monster_manual'), KeyboardButton(text='/dice')],
+                  [KeyboardButton(text="/delete")],
                   [KeyboardButton(text="/stop")]
                   ]
 
@@ -43,6 +44,7 @@ class Form(StatesGroup):
     rase = State()
     img = State()
     inventory = State()
+    delete_character = State()
 
 class Dice(StatesGroup):
     name_dice = State()
@@ -68,7 +70,7 @@ def check_person(user_id): # Проверяем, что пользователь
     user = cursor.fetchone()
     user_true_id = user
     conn.close()
-    return user is None, user_true_id # Никого нет найн
+    return user is None, user_true_id 
 
 def dobavka_person(user_id): # Добавляем его если его нет
     conn = sqlite3.connect("users.db")
@@ -96,8 +98,6 @@ async def start(message: types.Message):
                             "/help - справочник", reply_markup=kb)
 
 ################################################# API
-
-
 @dp.message(Command("dict"))
 async def dictionary_intro(message: types.Message, state: FSMContext):
     await message.answer("Привет, ты можешь написать любое слово, а я расскажу определение этого слова.")
@@ -127,6 +127,46 @@ def wikipedia_api(term: str, lang: str = "ru"):
     return None
 
 ################################################# API
+
+@dp.message(Command("delete")) # УДАЛИТЬ ПЕРСОНАЖЕЙ ИЗ БД
+async def delete_start(message: types.Message, state: FSMContext):
+    con = sqlite3.connect("list.db")
+    cur = con.cursor()
+    res = cur.execute("SELECT name FROM data WHERE user_id = ?", (message.from_user.id,))
+    characters = res.fetchall()
+    con.close()
+
+    if not characters:
+        await message.answer("Ты еще не создал своих персонажей)")
+        return
+
+    names_list = [f"✨ {char[0]}" for char in characters]
+    await message.answer("Вот твои созданные персонажи:\n" + "\n".join(names_list))
+    await message.answer("Напиши имена персонажей,которых хочешь удалить")
+    await state.set_state(Form.delete_character)
+
+
+@dp.message(Form.delete_character)
+async def delete_characters_by_name(message: types.Message, state: FSMContext):
+    names_to_delete = [name.strip() for name in message.text.split(",")]
+    user_id = message.from_user.id
+
+    con = sqlite3.connect("list.db")
+    cur = con.cursor()
+    deleted = 0
+
+    for name in names_to_delete:
+        cur.execute("DELETE FROM data WHERE user_id = ? AND name = ?", (user_id, name))
+        deleted = deleted + cur.rowcount
+
+    con.commit()
+    con.close()
+    await state.clear()
+
+    if deleted > 0:
+        await message.answer(f"Ты удалил: {deleted}", reply_markup=kb)
+    else:
+        await message.answer("Ни одного персонажа с такими именами не найдено.", reply_markup=kb)
 
 
 
@@ -244,12 +284,12 @@ async def magic_button(message: types.Message):
     response = requests.request("GET", url, headers=headers, data=payload)
 
     d = []
-    for i in response.text[24:-2].split('{'):
-        i = i.split(',')
+    for i in response.text[24:-2].split("{"):
+        i = i.split(",")
         i = i[1:]
         if i == []:
             continue
-        if i[-1] == '':
+        if i[-1] == "":
             i = i[:-1]
         s = []
         if len(i) == 3:
@@ -302,7 +342,7 @@ async def process_rase_and_image(message: types.Message, state: FSMContext):
     await state.set_state(Form.img)
     await message.answer("Теперь давай загрузим фото твоего персонажа! Если не хочешь — напиши 'Нет'")
 
-@dp.message(Form.img, F.photo) # Если отправил фотку
+@dp.message(Form.img, F.photo) # Если пользователь отправил фотку персонажа
 async def take_photo(message: types.Message, state: FSMContext):
     photo_id = message.photo[-1].file_id
     await state.update_data(img=photo_id)
@@ -317,7 +357,7 @@ async def skip_photo(message: types.Message, state: FSMContext):
         await state.set_state(Form.inventory)
         await message.answer("Хорошо, без изображения. Теперь напиши инвентарь персонажа:")
     else:
-        await message.answer("Пожалуйста, отправь фото или напиши 'Нет', если не хочешь добавлять изображение.")
+        await message.answer("Пожалуйста, отправь фото или напиши (Нет), если не хочешь добавлять изображение.")
 #############################
 
 
@@ -374,12 +414,10 @@ async def process_inventory(message: types.Message, state: FSMContext):
     await state.clear()
 
 
-
     if data.get("img"): # Если фото пользователь отправил - мы кидаем его если нет, то кидаем без него
         await message.answer_photo(photo=data["img"], caption=text)
     else:
         await message.answer(f"Ваш персонаж создан:\n\n{text}")
-
 
 
 if __name__ == '__main__':
